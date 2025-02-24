@@ -125,7 +125,16 @@ app.get('/api/messages/private/:userId', authenticate, async (req, res) => {
                 { sender: req.params.userId, recipient: req.userId },
             ],
         }).populate('sender', 'name');
-        res.json(messages);
+
+        // Format messages based on user role
+        const formattedMessages = messages.map(msg => ({
+            ...msg.toObject(),
+            content: msg.sender._id.toString() === req.userId.toString()
+                ? msg.plaintextContent  // Sender gets plaintext
+                : msg.encryptedContent, // Recipient gets encrypted
+        }));
+
+        res.json(formattedMessages);
     } catch (error) {
         res.status(500).json({ error: 'Server error' });
     }
@@ -134,8 +143,16 @@ app.get('/api/messages/private/:userId', authenticate, async (req, res) => {
 // Get Group Messages
 app.get('/api/messages/group/:groupId', authenticate, async (req, res) => {
     try {
-        const messages = await Message.find({ group: req.params.groupId }).populate('sender', 'name');
-        res.json(messages);
+        const messages = await Message.find({ group: req.params.groupId })
+            .populate('sender', 'name');
+
+        // Group messages use plaintextContent
+        const formattedMessages = messages.map(msg => ({
+            ...msg.toObject(),
+            content: msg.plaintextContent,
+        }));
+
+        res.json(formattedMessages);
     } catch (error) {
         res.status(500).json({ error: 'Server error' });
     }
@@ -173,8 +190,8 @@ io.on('connection', (socket) => {
 
             let message = {
                 sender: socket.userId,
-                content: msgData.content,
                 timestamp: new Date(),
+                tempId: msgData.tempId, // For client-side deduplication
             };
 
             if (msgData.recipient) {
@@ -183,23 +200,45 @@ io.on('connection', (socket) => {
                 console.log('Sender ID:', socket.userId);
                 console.log('Recipient ID:', msgData.recipient);
                 console.log('Encrypting for recipient:', recipient._id);
-                console.log('Recipient public key:', recipient.publicKey.substring(0, 50) + '...');
 
                 const encryptedContent = encryptMessage(msgData.content, recipient.publicKey);
-                message.content = encryptedContent;
+                message.plaintextContent = msgData.content; // Store plaintext for sender
+                message.encryptedContent = encryptedContent; // Store encrypted for recipient
                 message.recipient = msgData.recipient;
 
                 const savedMessage = await Message.create(message);
                 const populatedMessage = await Message.findById(savedMessage._id).populate('sender', 'name');
 
-                io.to(msgData.recipient).emit('chatMessage', populatedMessage);
-                const senderMessage = { ...populatedMessage.toObject(), content: msgData.content };
+                // Send encrypted version to recipient
+                const recipientMessage = {
+                    ...populatedMessage.toObject(),
+                    content: populatedMessage.encryptedContent,
+                    tempId: msgData.tempId,
+                };
+                io.to(msgData.recipient).emit('chatMessage', recipientMessage);
+
+                // Send plaintext version to sender
+                const senderMessage = {
+                    ...populatedMessage.toObject(),
+                    content: populatedMessage.plaintextContent,
+                    tempId: msgData.tempId,
+                };
                 io.to(socket.userId).emit('chatMessage', senderMessage);
             } else if (msgData.group) {
                 message.group = msgData.group;
+                message.plaintextContent = msgData.content; // Group messages are plaintext
+                message.encryptedContent = null;
+
                 const savedMessage = await Message.create(message);
                 const populatedMessage = await Message.findById(savedMessage._id).populate('sender', 'name');
-                io.emit('chatMessage', populatedMessage);
+
+                // Send plaintext to all clients
+                const groupMessage = {
+                    ...populatedMessage.toObject(),
+                    content: populatedMessage.plaintextContent,
+                    tempId: msgData.tempId,
+                };
+                io.emit('chatMessage', groupMessage);
             }
         } catch (err) {
             console.error('Chat message error:', err.message);
