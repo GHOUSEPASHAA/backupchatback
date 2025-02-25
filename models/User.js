@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema({
     status: { type: String, default: 'Offline' },
     publicKey: String, // For E2E encryption
     privateKey: String, // Store securely in production
+    image: { type: String, default: null } // URL or path to profile image
 });
 
 module.exports = mongoose.model('User', userSchema);
