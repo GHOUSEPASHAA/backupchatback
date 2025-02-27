@@ -21,7 +21,7 @@ const io = socketIo(server, { cors: { origin: '*' } });
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // Serve uploaded files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // MongoDB Connection
 mongoose.connect('mongodb://localhost:27017/employee-chat', {
@@ -34,14 +34,10 @@ mongoose.connect('mongodb://localhost:27017/employee-chat', {
 // JWT Secret
 const JWT_SECRET = 'your-secret-key';
 
-// Multer Configuration for File Uploads
+// Multer Configuration
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, 'uploads/');
-    },
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + path.extname(file.originalname));
-    }
+    destination: (req, file, cb) => cb(null, 'uploads/'),
+    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const upload = multer({
     storage,
@@ -60,13 +56,9 @@ function generateKeys() {
 // Message Encryption
 const encryptMessage = (content, publicKeyPem) => {
     try {
-        console.log('Encrypting with public key:', publicKeyPem.substring(0, 50) + '...');
-        console.log('Original content:', content);
         const publicKey = forge.pki.publicKeyFromPem(publicKeyPem);
         const encrypted = publicKey.encrypt(forge.util.encodeUtf8(content), 'RSA-OAEP');
-        const encoded = forge.util.encode64(encrypted);
-        console.log('Encrypted content:', encoded);
-        return encoded;
+        return forge.util.encode64(encrypted);
     } catch (error) {
         console.error('Encryption error:', error.message);
         throw error;
@@ -76,16 +68,12 @@ const encryptMessage = (content, publicKeyPem) => {
 // Authentication Middleware
 const authenticate = (req, res, next) => {
     let token = req.headers['authorization'];
-    if (!token) {
-        console.log('No token provided in request');
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
     if (token.startsWith('Bearer ')) token = token.slice(7);
 
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         req.userId = decoded.id;
-        console.log('Authenticated user:', req.userId);
         next();
     } catch (err) {
         console.error('Token verification failed:', err.message);
@@ -94,8 +82,6 @@ const authenticate = (req, res, next) => {
 };
 
 // Routes
-
-// Test Route
 app.get('/test', (req, res) => {
     console.log('Test endpoint hit');
     res.send('Server is running');
@@ -104,7 +90,6 @@ app.get('/test', (req, res) => {
 // User Signup
 app.post('/api/signup', upload.single('image'), async (req, res) => {
     const { name, email, password, location, designation } = req.body;
-    console.log('Signup request:', { name, email });
     try {
         const existingUser = await User.findOne({ email });
         if (existingUser) return res.status(400).json({ error: 'Email already in use' });
@@ -113,7 +98,7 @@ app.post('/api/signup', upload.single('image'), async (req, res) => {
         const userData = {
             name,
             email,
-            password, // In production, hash this!
+            password, // TODO: Hash this in production!
             location,
             designation,
             publicKey,
@@ -121,10 +106,7 @@ app.post('/api/signup', upload.single('image'), async (req, res) => {
             status: 'Online'
         };
 
-        if (req.file) {
-            userData.image = `/uploads/${req.file.filename}`; // Store image path
-            console.log('Profile image uploaded:', req.file.filename);
-        }
+        if (req.file) userData.image = `/uploads/${req.file.filename}`;
 
         const user = new User(userData);
         await user.save();
@@ -135,15 +117,15 @@ app.post('/api/signup', upload.single('image'), async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
+
 // User Login
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
-    console.log('Login request:', { email });
     try {
-        const user = await User.findOne({ email, password });
+        const user = await User.findOne({ email, password }).lean();
         if (!user) return res.status(401).json({ error: 'Invalid credentials' });
         user.status = 'Online';
-        await user.save();
+        await User.updateOne({ _id: user._id }, { status: 'Online' });
         const token = jwt.sign({ id: user._id }, JWT_SECRET);
         res.json({ token, privateKey: user.privateKey });
     } catch (err) {
@@ -154,9 +136,8 @@ app.post('/api/login', async (req, res) => {
 
 // Get All Users
 app.get('/api/users', authenticate, async (req, res) => {
-    console.log('GET /api/users called by user:', req.userId);
     try {
-        const users = await User.find({}, 'name _id status');
+        const users = await User.find({}, 'name _id status image').lean();
         res.json(users);
     } catch (error) {
         console.error('Error fetching users:', error.message);
@@ -164,15 +145,11 @@ app.get('/api/users', authenticate, async (req, res) => {
     }
 });
 
+// Get User Profile
 app.get('/api/users/:userId', authenticate, async (req, res) => {
-    console.log('GET /api/users/:userId called by user:', req.userId, 'for user:', req.params.userId);
     try {
-        const user = await User.findById(req.params.userId, 'name email location designation status image');
-        if (!user) {
-            console.log('User not found:', req.params.userId);
-            return res.status(404).json({ error: 'User not found' });
-        }
-        console.log('User profile fetched:', user);
+        const user = await User.findById(req.params.userId, 'name email location designation status image').lean();
+        if (!user) return res.status(404).json({ error: 'User not found' });
         res.json(user);
     } catch (error) {
         console.error('Error fetching user profile:', error.message);
@@ -182,13 +159,17 @@ app.get('/api/users/:userId', authenticate, async (req, res) => {
 
 // Create Group
 app.post('/api/groups', authenticate, async (req, res) => {
-    console.log('POST /api/groups called by user:', req.userId);
     try {
         const { name } = req.body;
         if (!name) return res.status(400).json({ error: 'Group name is required' });
-        const group = new Group({ name, members: [req.userId] });
+        const group = new Group({
+            name,
+            creator: req.userId,
+            members: [{ userId: req.userId, canSendMessages: true }]
+        });
         await group.save();
-        res.status(201).json(group);
+        const populatedGroup = await Group.findById(group._id).lean();
+        res.status(201).json(populatedGroup);
     } catch (error) {
         console.error('Error creating group:', error.message);
         res.status(500).json({ error: 'Server error' });
@@ -197,22 +178,103 @@ app.post('/api/groups', authenticate, async (req, res) => {
 
 // Get All Groups
 app.get('/api/groups', authenticate, async (req, res) => {
-    console.log('GET /api/groups called by user:', req.userId);
     try {
-        const groups = await Group.find({}, 'name _id');
-        res.json(groups);
+        const groups = await Group.find({ "members.userId": req.userId })
+            .populate('creator', 'name')
+            .populate('members.userId', 'name')
+            .lean();
+        const flattenedGroups = groups.map(group => ({
+            ...group,
+            creator: group.creator ? { _id: group.creator._id, name: group.creator.name } : group.creator,
+            members: group.members.map(member => ({
+                userId: member.userId ? { _id: member.userId._id, name: member.userId.name } : member.userId,
+                canSendMessages: member.canSendMessages
+            }))
+        }));
+        res.json(flattenedGroups);
     } catch (error) {
         console.error('Error fetching groups:', error.message);
         res.status(500).json({ error: 'Server error' });
     }
 });
 
+// Add Member to Group
+app.put('/api/groups/:groupId/members', authenticate, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { userId, canSendMessages } = req.body;
+        const group = await Group.findById(groupId);
+        if (!group) return res.status(404).json({ error: 'Group not found' });
+        if (group.creator.toString() !== req.userId) return res.status(403).json({ error: 'Only group admin can add members' });
+        if (group.members.some(m => m.userId.toString() === userId)) return res.status(400).json({ error: 'User already in group' });
+
+        group.members.push({ userId, canSendMessages });
+        await group.save();
+        const updatedGroup = await Group.findById(groupId)
+            .populate('creator', 'name')
+            .populate('members.userId', 'name')
+            .lean();
+        const flattenedGroup = {
+            ...updatedGroup,
+            creator: updatedGroup.creator ? { _id: updatedGroup.creator._id, name: updatedGroup.creator.name } : updatedGroup.creator,
+            members: updatedGroup.members.map(member => ({
+                userId: member.userId ? { _id: member.userId._id, name: member.userId.name } : member.userId,
+                canSendMessages: member.canSendMessages
+            }))
+        };
+        res.json(flattenedGroup);
+    } catch (error) {
+        console.error('Error adding member to group:', error.message);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// Update Group Permissions
+app.put('/api/groups/:groupId/permissions', authenticate, async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const { userId, canSendMessages } = req.body;
+        const group = await Group.findById(groupId);
+        if (!group) return res.status(404).json({ error: 'Group not found' });
+        if (group.creator.toString() !== req.userId) return res.status(403).json({ error: 'Only group admin can modify permissions' });
+
+        const member = group.members.find(m => m.userId.toString() === userId);
+        if (!member) return res.status(404).json({ error: 'Member not found' });
+        if (member.userId.toString() === req.userId) return res.status(400).json({ error: 'Cannot modify admin permissions' });
+
+        member.canSendMessages = canSendMessages;
+        await group.save();
+        const updatedGroup = await Group.findById(groupId)
+            .populate('creator', 'name')
+            .populate('members.userId', 'name')
+            .lean();
+        const flattenedGroup = {
+            ...updatedGroup,
+            creator: updatedGroup.creator ? { _id: updatedGroup.creator._id, name: updatedGroup.creator.name } : updatedGroup.creator,
+            members: updatedGroup.members.map(member => ({
+                userId: member.userId ? { _id: member.userId._id, name: member.userId.name } : member.userId,
+                canSendMessages: member.canSendMessages
+            }))
+        };
+        res.json(flattenedGroup);
+    } catch (error) {
+        console.error('Error updating group permissions:', error.message);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // File Upload Endpoint
 app.post('/api/upload', authenticate, upload.single('file'), async (req, res) => {
-    console.log('POST /api/upload called by user:', req.userId);
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No file uploaded' });
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+        if (req.body.group) {
+            const group = await Group.findById(req.body.group);
+            if (!group) return res.status(404).json({ error: 'Group not found' });
+            const member = group.members.find(m => m.userId.toString() === req.userId);
+            if (group.creator.toString() !== req.userId && (!member || !member.canSendMessages)) {
+                return res.status(403).json({ error: 'No permission to send files in this group' });
+            }
         }
 
         const fileDoc = new File({
@@ -229,7 +291,7 @@ app.post('/api/upload', authenticate, upload.single('file'), async (req, res) =>
         await fileDoc.save();
 
         const fileData = {
-            name: req.file.originalname,
+            name: req.file.originalName,
             url: `http://localhost:3000${fileDoc.path}`,
             size: req.file.size,
             mimeType: req.file.mimetype,
@@ -238,9 +300,9 @@ app.post('/api/upload', authenticate, upload.single('file'), async (req, res) =>
 
         res.json(fileData);
 
-        // Emit file message through socket
+        const sender = await User.findById(req.userId).lean();
         const messageData = {
-            sender: { _id: req.userId, name: (await User.findById(req.userId)).name },
+            sender: { _id: req.userId, name: sender.name },
             file: fileData,
             recipient: req.body.recipient || null,
             group: req.body.group || null,
@@ -252,7 +314,7 @@ app.post('/api/upload', authenticate, upload.single('file'), async (req, res) =>
             io.to(req.body.recipient).emit('chatMessage', messageData);
             io.to(req.userId).emit('chatMessage', messageData);
         } else if (req.body.group) {
-            io.emit('chatMessage', messageData);
+            io.to(req.body.group).emit('chatMessage', messageData); // Broadcast to group room
         }
     } catch (error) {
         console.error('File upload error:', error.message);
@@ -262,31 +324,29 @@ app.post('/api/upload', authenticate, upload.single('file'), async (req, res) =>
 
 // Get Private Messages (Including Files)
 app.get('/api/messages/private/:userId', authenticate, async (req, res) => {
-    console.log('GET /api/messages/private called by user:', req.userId);
     try {
         const messages = await Message.find({
             $or: [
                 { sender: req.userId, recipient: req.params.userId },
                 { sender: req.params.userId, recipient: req.userId },
             ],
-        }).populate('sender', 'name');
+        }).populate('sender', 'name').lean();
 
         const files = await File.find({
             $or: [
                 { sender: req.userId, recipient: req.params.userId },
                 { sender: req.params.userId, recipient: req.userId },
             ],
-        }).populate('sender', 'name');
+        }).populate('sender', 'name').lean();
 
         const formattedMessages = messages.map(msg => ({
-            ...msg.toObject(),
-            content: msg.sender._id.toString() === req.userId.toString()
-                ? msg.plaintextContent
-                : msg.encryptedContent,
+            ...msg,
+            sender: { _id: msg.sender._id, name: msg.sender.name },
+            content: msg.sender._id.toString() === req.userId.toString() ? msg.plaintextContent : msg.encryptedContent,
         }));
 
         const formattedFiles = files.map(file => ({
-            sender: file.sender,
+            sender: { _id: file.sender._id, name: file.sender.name },
             file: {
                 name: file.originalName,
                 url: `http://localhost:3000${file.path}`,
@@ -298,9 +358,7 @@ app.get('/api/messages/private/:userId', authenticate, async (req, res) => {
             timestamp: file.createdAt
         }));
 
-        res.json([...formattedMessages, ...formattedFiles].sort((a, b) =>
-            new Date(a.timestamp) - new Date(b.timestamp)
-        ));
+        res.json([...formattedMessages, ...formattedFiles].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)));
     } catch (error) {
         console.error('Error fetching private messages:', error.message);
         res.status(500).json({ error: 'Server error' });
@@ -309,21 +367,23 @@ app.get('/api/messages/private/:userId', authenticate, async (req, res) => {
 
 // Get Group Messages (Including Files)
 app.get('/api/messages/group/:groupId', authenticate, async (req, res) => {
-    console.log('GET /api/messages/group called by user:', req.userId);
     try {
-        const messages = await Message.find({ group: req.params.groupId })
-            .populate('sender', 'name');
+        const group = await Group.findById(req.params.groupId);
+        if (!group || !group.members.some(m => m.userId.toString() === req.userId)) {
+            return res.status(403).json({ error: 'Not a member of this group' });
+        }
 
-        const files = await File.find({ group: req.params.groupId })
-            .populate('sender', 'name');
+        const messages = await Message.find({ group: req.params.groupId }).populate('sender', 'name').lean();
+        const files = await File.find({ group: req.params.groupId }).populate('sender', 'name').lean();
 
         const formattedMessages = messages.map(msg => ({
-            ...msg.toObject(),
+            ...msg,
+            sender: { _id: msg.sender._id, name: msg.sender.name },
             content: msg.plaintextContent,
         }));
 
         const formattedFiles = files.map(file => ({
-            sender: file.sender,
+            sender: { _id: file.sender._id, name: file.sender.name },
             file: {
                 name: file.originalName,
                 url: `http://localhost:3000${file.path}`,
@@ -335,9 +395,7 @@ app.get('/api/messages/group/:groupId', authenticate, async (req, res) => {
             timestamp: file.createdAt
         }));
 
-        res.json([...formattedMessages, ...formattedFiles].sort((a, b) =>
-            new Date(a.timestamp) - new Date(b.timestamp)
-        ));
+        res.json([...formattedMessages, ...formattedFiles].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)));
     } catch (error) {
         console.error('Error fetching group messages:', error.message);
         res.status(500).json({ error: 'Server error' });
@@ -360,19 +418,43 @@ io.on('connection', (socket) => {
         const decoded = jwt.verify(token, JWT_SECRET);
         userId = decoded.id;
         socket.userId = userId;
-        socket.join(userId);
-        console.log(`User ${userId} joined with socket ID: ${socket.id}`);
+        socket.join(userId); // Join user's personal room
         socket.emit('userId', userId);
+        console.log(`User ${userId} authenticated and joined personal room`);
     } catch (err) {
         console.error('Connection token error:', err.message);
         socket.disconnect(true);
         return;
     }
 
+    socket.on('joinGroup', (groupId) => {
+        socket.join(groupId);
+        console.log(`User ${socket.userId} joined group room ${groupId}`);
+        // List rooms for debugging
+        console.log(`Current rooms for socket ${socket.id}:`, socket.rooms);
+    });
+
+    socket.on('leaveGroup', (groupId) => {
+        socket.leave(groupId);
+        console.log(`User ${socket.userId} left group room ${groupId}`);
+    });
+
     socket.on('chatMessage', async (msgData) => {
         try {
-            const sender = await User.findById(socket.userId);
+            console.log('Received chatMessage:', msgData);
+            const sender = await User.findById(socket.userId).lean();
             if (!sender) throw new Error('Sender not found');
+
+            if (msgData.group) {
+                const group = await Group.findById(msgData.group);
+                if (!group) throw new Error('Group not found');
+                const member = group.members.find(m => m.userId.toString() === socket.userId);
+                if (group.creator.toString() !== socket.userId && (!member || !member.canSendMessages)) {
+                    socket.emit('error', { message: 'No permission to send messages in this group' });
+                    console.log(`Permission denied for user ${socket.userId} in group ${msgData.group}`);
+                    return;
+                }
+            }
 
             if (msgData.file) {
                 const fileMessage = {
@@ -386,8 +468,10 @@ io.on('connection', (socket) => {
                 if (msgData.recipient) {
                     io.to(msgData.recipient).emit('chatMessage', fileMessage);
                     io.to(socket.userId).emit('chatMessage', fileMessage);
+                    console.log(`File message sent to recipient ${msgData.recipient} and sender ${socket.userId}`);
                 } else if (msgData.group) {
-                    io.emit('chatMessage', fileMessage);
+                    io.to(msgData.group).emit('chatMessage', fileMessage);
+                    console.log(`File message broadcast to group room ${msgData.group}`);
                 }
                 return;
             }
@@ -399,9 +483,8 @@ io.on('connection', (socket) => {
             };
 
             if (msgData.recipient) {
-                const recipient = await User.findById(msgData.recipient);
+                const recipient = await User.findById(msgData.recipient).lean();
                 if (!recipient) throw new Error('Recipient not found');
-                console.log('Sending private message from:', socket.userId, 'to:', msgData.recipient);
 
                 const encryptedContent = encryptMessage(msgData.content, recipient.publicKey);
                 message.plaintextContent = msgData.content;
@@ -409,32 +492,37 @@ io.on('connection', (socket) => {
                 message.recipient = msgData.recipient;
 
                 const savedMessage = await Message.create(message);
-                const populatedMessage = await Message.findById(savedMessage._id).populate('sender', 'name');
+                const populatedMessage = await Message.findById(savedMessage._id).populate('sender', 'name').lean();
 
                 io.to(msgData.recipient).emit('chatMessage', {
-                    ...populatedMessage.toObject(),
+                    ...populatedMessage,
+                    sender: { _id: populatedMessage.sender._id, name: populatedMessage.sender.name },
                     content: populatedMessage.encryptedContent,
                     tempId: msgData.tempId,
                 });
 
                 io.to(socket.userId).emit('chatMessage', {
-                    ...populatedMessage.toObject(),
+                    ...populatedMessage,
+                    sender: { _id: populatedMessage.sender._id, name: populatedMessage.sender.name },
                     content: populatedMessage.plaintextContent,
                     tempId: msgData.tempId,
                 });
+                console.log(`Private message sent to ${msgData.recipient} and sender ${socket.userId}`);
             } else if (msgData.group) {
                 message.group = msgData.group;
                 message.plaintextContent = msgData.content;
                 message.encryptedContent = null;
 
                 const savedMessage = await Message.create(message);
-                const populatedMessage = await Message.findById(savedMessage._id).populate('sender', 'name');
+                const populatedMessage = await Message.findById(savedMessage._id).populate('sender', 'name').lean();
 
-                io.emit('chatMessage', {
-                    ...populatedMessage.toObject(),
+                io.to(msgData.group).emit('chatMessage', {
+                    ...populatedMessage,
+                    sender: { _id: populatedMessage.sender._id, name: populatedMessage.sender.name },
                     content: populatedMessage.plaintextContent,
                     tempId: msgData.tempId,
                 });
+                console.log(`Group message broadcast to group room ${msgData.group}`);
             }
         } catch (err) {
             console.error('Chat message error:', err.message);
@@ -456,11 +544,9 @@ io.on('connection', (socket) => {
         }
     });
 });
-
 // Start Server
 const PORT = 3000;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Test endpoint: http://localhost:${PORT}/test`);
-    console.log(`API endpoints: /api/signup, /api/login, /api/users, /api/groups, /api/upload, etc.`);
 });
