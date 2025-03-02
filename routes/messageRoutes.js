@@ -83,4 +83,41 @@ router.get('/messages/group/:groupId', authenticate, async (req, res) => {
     }
 });
 
+router.get("/messages/last-messages", authenticate, async (req, res) => {
+    try {
+        const userId = req.userId;
+        console.log("Fetching last messages received by userId:", userId);
+
+        const lastMessages = await Message.aggregate([
+            {
+                $match: {
+                    recipient: userId, // Only messages received by the current user
+                    sender: { $ne: userId }, // Exclude messages sent by the current user
+                    recipient: { $ne: null }, // Only private messages
+                    fileUrl: null // Only text messages (exclude files)
+                }
+            },
+            {
+                $group: {
+                    _id: "$sender", // Group by sender (who sent the message)
+                    lastMessageTime: { $max: "$timestamp" }
+                }
+            },
+            {
+                $project: {
+                    userId: "$_id", // The sender’s ID
+                    lastMessageTime: 1,
+                    _id: 0
+                }
+            }
+        ]);
+
+        console.log("Last messages received result:", lastMessages);
+        res.json(lastMessages);
+    } catch (error) {
+        console.error("Error fetching last messages:", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+});
+
 module.exports = router;
