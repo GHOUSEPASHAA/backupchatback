@@ -17,6 +17,11 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: '*' } });
 
+app.use((req, res, next) => {
+    req.io = io;
+    next();
+});
+
 // Middleware
 app.use(cors());
 app.use(express.json());

@@ -8,11 +8,15 @@ const upload = require('../middleware/multerConfig');
 
 router.post('/upload', authenticate, upload.single('file'), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
 
         if (req.body.group) {
             const group = await Group.findById(req.body.group);
-            if (!group) return res.status(404).json({ error: 'Group not found' });
+            if (!group) {
+                return res.status(404).json({ error: 'Group not found' });
+            }
             const member = group.members.find(m => m.userId.toString() === req.userId);
             if (group.creator.toString() !== req.userId && (!member || !member.canSendMessages)) {
                 return res.status(403).json({ error: 'No permission to send files in this group' });
@@ -40,9 +44,11 @@ router.post('/upload', authenticate, upload.single('file'), async (req, res) => 
             _id: fileDoc._id
         };
 
-        res.json(fileData);
-
         const sender = await User.findById(req.userId).lean();
+        if (!sender) {
+            throw new Error('Sender not found');
+        }
+
         const messageData = {
             sender: { _id: req.userId, name: sender.name },
             file: fileData,
@@ -52,11 +58,19 @@ router.post('/upload', authenticate, upload.single('file'), async (req, res) => 
             timestamp: new Date()
         };
 
-        // Emit via Socket.IO (handled in socketHandler.js)
-        req.io.to(req.body.recipient || req.body.group || req.userId).emit('chatMessage', messageData);
+        // Emit Socket.IO message before sending response
+        const target = req.body.recipient || req.body.group || req.userId;
+        req.io.to(target).emit('chatMessage', messageData);
+
+        // Send response only after all operations are complete
+        return res.json(fileData);
+
     } catch (error) {
         console.error('File upload error:', error.message);
-        res.status(500).json({ error: 'Server error' });
+        // Only send error response if no response has been sent yet
+        if (!res.headersSent) {
+            return res.status(500).json({ error: 'Server error during file upload' });
+        }
     }
 });
 
