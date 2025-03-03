@@ -28,7 +28,7 @@ app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // MongoDB Connection
-mongoose.connect('mongodb+srv://chats:chats@cluster0.g7jsw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0', {
+mongoose.connect('mongodb://localhost:27017/employee-chat', {
     useNewUrlParser: true,
     useUnifiedTopology: true,
 })

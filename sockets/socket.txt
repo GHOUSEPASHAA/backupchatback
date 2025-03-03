@@ -23,7 +23,7 @@ const socketHandler = (io) => {
             socket.userId = userId;
             socket.join(userId); // Join user's personal room
             socket.emit("userId", userId);
-            console.log(`User ${userId} joined room ${userId}`);
+            console.log(`User ${userId} authenticated and joined personal room`);
         } catch (err) {
             console.error("Connection token error:", err.message);
             socket.disconnect(true);
@@ -141,7 +141,6 @@ const socketHandler = (io) => {
             }
         });
 
-        // One-on-One Call Events
         socket.on("callRequest", async ({ to }) => {
             try {
                 const recipient = await User.findById(to).lean();
@@ -178,7 +177,8 @@ const socketHandler = (io) => {
             }
         });
 
-        socket.on("callEnded", async ({ to }) => {
+        socket.on("callEnded", async (data) => {
+            const to = data?.to; // Safely access 'to', undefined if missing
             if (!to) {
                 console.log("No 'to' provided in callEnded event, skipping...");
                 return;
@@ -191,33 +191,6 @@ const socketHandler = (io) => {
             } catch (err) {
                 console.error("Call end error:", err.message);
                 socket.emit("error", { message: "Failed to end call" });
-            }
-        });
-
-        // Group Call Events
-        socket.on("startGroupCall", async ({ groupId }) => {
-            try {
-                const group = await Group.findById(groupId).lean();
-                if (!group) throw new Error("Group not found");
-                console.log(`Group call started by ${socket.userId} for group ${groupId}`);
-                // Include callerId in the payload
-                io.to(groupId).emit("groupCallStarted", { groupId, callerId: socket.userId });
-            } catch (err) {
-                console.error("Start group call error:", err.message);
-                socket.emit("error", { message: "Failed to start group call" });
-            }
-        });
-
-        socket.on("endGroupCall", async ({ groupId }) => {
-            try {
-                const group = await Group.findById(groupId).lean();
-                if (!group) throw new Error("Group not found");
-                // Keep this unrestricted or restrict to creator based on your preference
-                console.log(`Group call ended by ${socket.userId} for group ${groupId}`);
-                io.to(groupId).emit("groupCallEnded", { groupId });
-            } catch (err) {
-                console.error("End group call error:", err.message);
-                socket.emit("error", { message: "Failed to end group call" });
             }
         });
 

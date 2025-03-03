@@ -5,7 +5,8 @@ const groupSchema = new mongoose.Schema({
     creator: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // Group admin
     members: [{
         userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-        canSendMessages: { type: Boolean, default: false } // Messaging permission, default false except for creator
+        canSendMessages: { type: Boolean, default: false }, // Messaging permission, default false except for creator
+        canCall: { type: Boolean, default: false } // Calling permission, default false except for creator
     }],
     createdAt: { type: Date, default: Date.now }
 });
