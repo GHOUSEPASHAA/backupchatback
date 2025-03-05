@@ -71,8 +71,8 @@ router.put('/users/me', authenticate, async (req, res) => {
             email: req.body.email,
             designation: req.body.designation,
             location: req.body.location,
-            status: req.body.status
-            // Note: 'image' is updated via /upload/profile-photo, so we don’t overwrite it here
+            status: req.body.status,
+            password: req.body.password // Directly updating password
         };
 
         // Filter out undefined values to avoid overwriting with null
@@ -108,5 +108,6 @@ router.put('/users/me', authenticate, async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
+
 
 module.exports = router;
